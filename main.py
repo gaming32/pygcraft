@@ -45,25 +45,25 @@ def tex_coords(top, bottom, side):
     return result
 
 TEXTURE_PATH = 'textures/texture.png'
-GRASS = {'texture': tex_coords((1, 0), (1, 0), (1, 0)), 'height': 0}
-DIRT = {'texture': tex_coords((0, 1), (0, 1), (0, 1)), 'height': 0}
-SAND = {'texture': tex_coords((1, 1), (1, 1), (1, 1)), 'height': 0}
-STONE = {'texture': tex_coords((2, 0), (2, 0), (2, 0)), 'height': 0}
-IRON = {'texture': tex_coords((2, 1), (2, 1), (2, 1)), 'height': 0}
-STEEL = {'texture': tex_coords((3, 1), (3, 1), (3, 1)), 'height': 0}
-WOOD = {'texture': tex_coords((0, 0), (0, 0), (0, 0)), 'height': 0}
-LOG = {'texture': tex_coords((3, 0), (3, 0), (3, 3)), 'height': 0}
-BENCH = {'texture': tex_coords((0, 2), (0, 0), (0, 0)), 'height': 0}
-OVEN = {'texture': tex_coords((3, 2), (3, 2), (1, 2)), 'height': 0}
-REACTOR = {'texture': tex_coords((2, 2), (2, 2), (2, 2)), 'height': 0}
-BLACK_IRON = {'texture': tex_coords((3, 2), (3, 2), (3, 2)), 'height': 0}
-FIRE = {'texture': tex_coords((0, 4), (0, 4), (0, 3)), 'height': 0}
-ICE = {'texture': tex_coords((1, 3), (1, 3), (1, 3)), 'height': 0}
-WATER = {'texture': tex_coords((2, 3), (2, 3), (2, 3)), 'height': 0}
+GRASS = {'texture': tex_coords((1, 0), (1, 0), (1, 0)), 'height': 0, 'name': 'GRASS'}
+DIRT = {'texture': tex_coords((0, 1), (0, 1), (0, 1)), 'height': 0, 'name': 'DIRT'}
+SAND = {'texture': tex_coords((1, 1), (1, 1), (1, 1)), 'height': 0, 'name': 'SAND'}
+STONE = {'texture': tex_coords((2, 0), (2, 0), (2, 0)), 'height': 0, 'name': 'STONE'}
+IRON = {'texture': tex_coords((2, 1), (2, 1), (2, 1)), 'height': 0, 'name': 'IRON'}
+STEEL = {'texture': tex_coords((3, 1), (3, 1), (3, 1)), 'height': 0, 'name': 'STEEL'}
+WOOD = {'texture': tex_coords((0, 0), (0, 0), (0, 0)), 'height': 0, 'name': 'WOOD'}
+LOG = {'texture': tex_coords((3, 0), (3, 0), (3, 3)), 'height': 0, 'name': 'LOG'}
+BENCH = {'texture': tex_coords((0, 2), (0, 0), (0, 0)), 'height': 0, 'name': 'BENCH'}
+OVEN = {'texture': tex_coords((3, 2), (3, 2), (1, 2)), 'height': 0, 'name': 'OVEN'}
+REACTOR = {'texture': tex_coords((2, 2), (2, 2), (2, 2)), 'height': 0, 'name': 'REACTOR'}
+BLACK_IRON = {'texture': tex_coords((3, 2), (3, 2), (3, 2)), 'height': 0, 'name': 'BLACK_IRON'}
+FIRE = {'texture': tex_coords((0, 4), (0, 4), (0, 3)), 'height': 0, 'name': 'FIRE'}
+ICE = {'texture': tex_coords((1, 3), (1, 3), (1, 3)), 'height': 0, 'name': 'ICE'}
+WATER = {'texture': tex_coords((2, 3), (2, 3), (2, 3)), 'height': 0, 'name': 'WATER'}
 BLOCKS = [GRASS, DIRT, SAND, STONE, IRON, STEEL, WOOD, LOG, BENCH, OVEN, REACTOR, BLACK_IRON, FIRE, ICE, WATER]
 HALFBLOCKS = []
 for block in BLOCKS:
-    HALFBLOCKS.append({'texture': block['texture'], 'height': 0.5})
+    HALFBLOCKS.append({'texture': block['texture'], 'height': 0.5, 'name': block['name']+'_HALF'})
 FACES = [
     ( 0, 1, 0),
     ( 0,-1, 0),
@@ -239,8 +239,8 @@ class Model(object):
         func(*args)
 
     def process_queue(self):
-        start = time.clock()
-        while self.queue and time.clock() - start < 1.0 / TICKS_PER_SEC:
+        start = time.process_time()
+        while self.queue and time.process_time() - start < 1.0 / TICKS_PER_SEC:
             self._dequeue()
 
     def process_entire_queue(self):
@@ -250,7 +250,14 @@ class Model(object):
 class Window(pyglet.window.Window):
     def __init__(self, *args, **kwargs):
         super(Window, self).__init__(*args, **kwargs)
+
+        # loading_image = image.load('textures/loading.png')
+        # self.clear()
+        # loading_image.blit(0, 0)
+        # time.sleep(3)
+
         self.exclusive = False
+        self.chatbox_open = False
         self.showLabel = True
         self.flying = False
         self.running = False
@@ -260,6 +267,7 @@ class Window(pyglet.window.Window):
         self.sector = None
         self.reticle = None
         self.dy = 0
+        self.health = 20
         self.inventory = BLOCKS + HALFBLOCKS
         self.block = self.inventory[0]
         self.num_keys = [
@@ -269,11 +277,21 @@ class Window(pyglet.window.Window):
         self.label = pyglet.text.Label('', font_name='Arial', font_size=18,
             x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
             color=(0, 0, 0, 255))
+        self.hudLabel = pyglet.text.Label('', font_name='Arial', font_size=18,
+            x=10, y=10, anchor_x='left', anchor_y='bottom',
+            color=(0, 0, 0, 255))
+        self.chatbox_text = pyglet.text.Label('', font_name='Arial', font_size=15,
+            x=10, y=20, anchor_x='left', anchor_y='bottom',
+            color=(240, 240, 240, 255))
+        self.chatbox_history = []
         pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
 
     def set_exclusive_mouse(self, exclusive):
         super(Window, self).set_exclusive_mouse(exclusive)
         self.exclusive = exclusive
+
+    def toggle_exclusive_mouse(self):
+        self.set_exclusive_mouse(not self.exclusive)
 
     def get_sight_vector(self):
         x, y = self.rotation
@@ -321,6 +339,8 @@ class Window(pyglet.window.Window):
         dt = min(dt, 0.2)
         for _ in xrange(m):
             self._update(dt / m)
+        if self.health <= 0:
+            self.death()
 
     def _update(self, dt):
         if self.flying and self.running:
@@ -341,6 +361,16 @@ class Window(pyglet.window.Window):
         x, y, z = self.position
         x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
         self.position = (x, y, z)
+        if self.position[1] < -20:
+            self.health += self.position[1] + 20
+
+    def death(self):
+        self.health = 20
+        self.position = (0, 0, 0)
+
+    def toggle_chatbox(self):
+        self.chatbox_open = not self.chatbox_open
+        pass
 
     def collide(self, position, height):
         pad = 0.25
@@ -388,6 +418,16 @@ class Window(pyglet.window.Window):
             self.rotation = (x, y)
 
     def on_key_press(self, symbol, modifiers):
+        if symbol == key.ESCAPE:
+            self.toggle_exclusive_mouse()
+            self.chatbox_open = False
+        if not self.chatbox_open:
+            self.on_key_press_game(symbol, modifiers)
+        else:
+            if symbol == key.RETURN:
+                self.chatbox_send()
+
+    def on_key_press_game(self, symbol, modifiers):
         if symbol == key.W or symbol == key.UP:
             self.strafe[0] -= 1
         elif symbol == key.S or symbol == key.DOWN:
@@ -399,8 +439,9 @@ class Window(pyglet.window.Window):
         elif symbol == key.SPACE:
             if self.dy == 0 or self.flying:
                 self.dy += JUMP_SPEED
-        elif symbol == key.ESCAPE:
+        elif symbol == key.T or symbol == key.SLASH:
             self.set_exclusive_mouse(False)
+            self.chatbox_open = True
         elif symbol == key.TAB:
             self.flying = not self.flying
         elif modifiers & key.MOD_ALT:
@@ -477,8 +518,11 @@ class Window(pyglet.window.Window):
         self.model.batch.draw()
         self.draw_focused_block()
         self.set_2d()
-        if self.showLabel: self.draw_label()
-        if self.showLabel: self.draw_reticle()
+        if not self.chatbox_open:
+            if self.showLabel: self.draw_label()
+            if self.showLabel: self.draw_reticle()
+        else:
+            self.draw_chatbox()
 
     def draw_focused_block(self):
         vector = self.get_sight_vector()
@@ -491,12 +535,42 @@ class Window(pyglet.window.Window):
             pyglet.graphics.draw(24, GL_QUADS, ('v3f/static', vertex_data))
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
+    def draw_chatbox(self):
+        self.chatbox_text.draw()
+
+    def on_text(self, text):
+        if self.chatbox_open:
+            print(self.chatbox.text, text)
+            self.chatbox_text.text = self.chatbox_text.text + text
+
+    def chatbox_send(self):
+        text = str(self.chatbox_text.text)
+        print(text)
+        print(text[0])
+        # self.chatbox_text.text = ''
+        print('tmp_reset')
+        self.chatbox_text = pyglet.text.Label('', font_name='Arial', font_size=15,
+            x=10, y=20, anchor_x='left', anchor_y='bottom',
+            color=(240, 240, 240, 255))
+        if text[0] == '/':
+            self.command_exec(text)
+        else:
+            self.chatbox_history.append(text)
+
+    def command_exec(self, cmd):
+        cmd = cmd[1:]
+        print(cmd)
+
     def draw_label(self):
         x, y, z = self.position
         self.label.text = '%02d (%.2f, %.2f, %.2f) %d / %d' % (
             pyglet.clock.get_fps(), x, y, z,
             len(self.model._shown), len(self.model.world))
+        self.hudLabel.text = 'CurrentBlock:%s Health:%d' % (
+            self.block['name'], self.health
+        )
         self.label.draw()
+        self.hudLabel.draw()
 
     def draw_reticle(self):
         glColor3d(0, 0, 0)
