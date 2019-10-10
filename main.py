@@ -2,10 +2,12 @@ from __future__ import print_function
 import sys
 import math, random, time, datetime
 from collections import deque
-from pyglet import image
+from pyglet import image, options
 from pyglet.gl import *
 from pyglet.graphics import TextureGroup
 from pyglet.window import key, mouse
+options['audio'] = ('openal', 'pulse', 'directsound', 'silent')
+from pyglet import media
 
 TICKS_PER_SEC = 60
 SECTOR_SIZE = 8
@@ -26,6 +28,14 @@ else:
     timefunc = time.clock
 if sys.version_info[0] == 2:
     input = raw_input
+
+def _lerp(l, u, r):
+    return (r * u) + ((1 - r) * l)
+def lerp(colL, colU, rate):
+    r = _lerp(colL[0], colU[0], rate)
+    g = _lerp(colL[1], colU[1], rate)
+    b = _lerp(colL[2], colU[2], rate)
+    return r, g, b
 
 def cube_vertices(x, y, z, n):
     return [
@@ -52,6 +62,13 @@ def tex_coords(top, bottom, side):
     result.extend(bottom)
     result.extend(side * 4)
     return result
+
+break_sfx = {
+    'grass': media.load('sounds/grass_break.wav'),
+    'sand': media.load('sounds/sand_break.wav'),
+    'stone': media.load('sounds/stone_break.wav'),
+    'wood': media.load('sounds/wood_break.wav'),
+}
 
 TEXTURE_PATH = 'textures/texture.png'
 GRASS = {'texture': tex_coords((1, 0), (1, 0), (1, 0)), 'height': 0, 'name': 'GRASS'}
@@ -93,20 +110,29 @@ def sectorize(position):
     return (x, 0, z)
 
 class Model(object):
-    def __init__(self):
+    def __init__(self, world=None):
         self.batch = pyglet.graphics.Batch()
         self.group = TextureGroup(image.load(TEXTURE_PATH).get_texture())
-        self.world = {}
+        if world is None:
+            world = {}
+        self.world = world
         self.shown = {}
         self._shown = {}
         self.sectors = {}
         self.queue = deque()
-        self._initialize()
+        if not world:
+            self._initialize()
 
     def _initialize(self, size=120, floor=GRASS, walls=IRON, hills=random.randint(40, 80), hillBlocks=[GRASS,SAND,STONE]):
         n = size
         s = 1
         y = 0
+        def update_progress(amount=1):
+            nonlocal progress
+            progress += amount
+            print('Generating World... Progress: %i/%i (%i%%)' % (progress, length, progress / length * 100), end='\r')
+        length = ((2 * size + 2) ** 2) + hills * 5000 - 483
+        progress = 0
         for x in xrange(-n, n + 1, s):
             for z in xrange(-n, n + 1, s):
                 self.add_block((x, y - 2, z), floor, immediate=False)
@@ -114,6 +140,7 @@ class Model(object):
                 if x in (-n, n) or z in (-n, n):
                     for dy in xrange(-2, 3):
                         self.add_block((x, y + dy, z), walls, immediate=False)
+                update_progress()
         o = n - 20
         for _ in xrange(hills):
             a = random.randint(-o, o)
@@ -132,6 +159,8 @@ class Model(object):
                             continue
                         self.add_block((x, y, z), t, immediate=False)
                 s -= d
+            update_progress(5000)
+        print()
 
     def hit_test(self, position, vector, max_distance=8):
         m = 8
@@ -164,6 +193,10 @@ class Model(object):
             self.check_neighbors(position)
 
     def remove_block(self, position, immediate=True):
+        if immediate:
+            ix = self.world[position]
+            if ix == GRASS['texture']:
+                break_sfx['grass'].play()
         del self.world[position]
         self.sectors[sectorize(position)].remove(position)
         if immediate:
@@ -260,16 +293,17 @@ class Window(pyglet.window.Window):
     def __init__(self, *args, **kwargs):
         super(Window, self).__init__(*args, **kwargs)
 
-        # loading_image = image.load('textures/loading.png')
-        # self.clear()
-        # loading_image.blit(0, 0)
-        # time.sleep(3)
+        self.saver_loader = 'pickle'
+        # self.loading_image = image.load('textures/loading.png')
+        # self.loaded = False
+        # pyglet.clock.schedule(self._loading_screen, 1)
 
         self.exclusive = False
         self.chatbox_open = False
         self.showLabel = True
         self.flying = False
         self.running = False
+        self.gamemode = 1
         self.strafe = [0, 0]
         self.position = (0, 0, 0)
         self.rotation = (0, 0)
@@ -283,6 +317,7 @@ class Window(pyglet.window.Window):
             key._1, key._2, key._3, key._4, key._5,
             key._6, key._7, key._8, key._9]
         self.model = Model()
+        self.clear_color = (0.5, 0.69, 1.0)
         self.label = pyglet.text.Label('', font_name='Arial', font_size=18,
             x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
             color=(0, 0, 0, 255))
@@ -293,7 +328,16 @@ class Window(pyglet.window.Window):
             x=10, y=20, anchor_x='left', anchor_y='bottom',
             color=(240, 240, 240, 255))
         self.chatbox_history = []
+        self.loaded = True
         pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
+
+    def _loading_screen(self, *p, **k):
+        self.clear()
+        self.loading_image.blit(0, 0)
+        if not self.loaded:
+            pyglet.clock.schedule(self._loading_screen, 1)
+        else:
+            del self.loaded, self.loading_image
 
     def set_exclusive_mouse(self, exclusive):
         super(Window, self).set_exclusive_mouse(exclusive)
@@ -348,6 +392,21 @@ class Window(pyglet.window.Window):
         dt = min(dt, 0.2)
         for _ in xrange(m):
             self._update(dt / m)
+        y = self.position[1]
+        u = (0.5, 0.69, 1.0)
+        l = (0, 0, 0)
+        if y >= -20 and y < -2:
+            self.clear_color = lerp(l, u, abs(1 / y))
+        elif y >= -2:
+            self.clear_color = u
+        elif y < -20:
+            self.clear_color = l
+        else:
+            self.clear_color = (0.5, 0.5, 0.5)
+        self.clear_color += (1,)
+        glClearColor(*self.clear_color)
+        if y < -20:
+            self.health += (y + 20) / dt
         if self.health <= 0:
             self.death()
 
@@ -368,10 +427,11 @@ class Window(pyglet.window.Window):
             self.dy = max(self.dy, -TERMINAL_VELOCITY)
             dy += self.dy * dt
         x, y, z = self.position
-        x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
+        if not (self.gamemode == 4 or self.gamemode == 3):
+            x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
+        else:
+            x, y, z = x + dx, y + dy, z + dz
         self.position = (x, y, z)
-        if self.position[1] < -20:
-            self.health += self.position[1] + 20
 
     def death(self):
         self.health = 20
@@ -406,15 +466,15 @@ class Window(pyglet.window.Window):
 
     def on_mouse_press(self, x, y, button, modifiers):
         if self.exclusive:
-            vector = self.get_sight_vector()
-            block, previous = self.model.hit_test(self.position, vector)
-            if (button == mouse.RIGHT) or \
-                    ((button == mouse.LEFT) and (modifiers & key.MOD_CTRL)):
-                if previous:
-                    self.model.add_block(previous, self.block)
-            elif button == pyglet.window.mouse.LEFT and block:
-                self.model.remove_block(block)
-                    
+            if self.gamemode != 3:
+                vector = self.get_sight_vector()
+                block, previous = self.model.hit_test(self.position, vector)
+                if (button == mouse.RIGHT) or \
+                        ((button == mouse.LEFT) and (modifiers & key.MOD_CTRL)):
+                    if previous and not self.position[1] == y and not self.position[1] + 1 == y:
+                        self.model.add_block(previous, self.block)
+                elif button == pyglet.window.mouse.LEFT and block:
+                    self.model.remove_block(block)
         else:
             self.set_exclusive_mouse(True)
 
@@ -538,7 +598,7 @@ class Window(pyglet.window.Window):
     def draw_focused_block(self):
         vector = self.get_sight_vector()
         block = self.model.hit_test(self.position, vector)[0]
-        if block:
+        if block and self.gamemode != 3:
             x, y, z = block
             vertex_data = cube_vertices(x, y - self.model.world[block]['height'], z, 0.51)
             glColor3d(0, 0, 0)
@@ -571,19 +631,41 @@ class Window(pyglet.window.Window):
     def command_exec(self, cmd):
         cmd = cmd.lstrip('/')
         # print(cmd)
-        cmd, args = cmd.split(' ', 1)
-        if cmd == 'tp':
+        if ' ' in cmd:
+            cmd, args = cmd.split(' ', 1)
+        else: args = ''
+        if cmd == 'tp' or cmd == 'teleport':
             pos = tuple(int(x) for x in args.split(' '))
             self.position = pos
             print('Teleported Player to %i, %i, %i' % pos)
         elif cmd == 'kill':
             self.death()
             print('Killed Player')
+        elif cmd == 'gamemode':
+            self.gamemode = int(args)
         elif cmd == 'loadseed':
             random.seed(int(args))
             self.world = Model()
+        elif cmd == 'newworld':
+            self.world = Model()
+            self.position = (0, 0, 0)
+            self.rotation = (0, 0)
         elif cmd == 'seed':
             print(random.seed())
+        elif cmd == 'savefmt':
+            self.saver_loader = args
+        elif cmd == 'save':
+            exec('from save_load import %s as saver' % self.saver_loader, globals())
+            # saver = __import__('save_load', fromlist=[self.saver_loader])
+            print(dir(saver))
+            print(saver.save(self.args, world=self.world, position=self.position, rotation=self.rotation))
+        elif cmd == 'load':
+            exec('import save_load.%s as loader' % self.saver_loader)
+            # loader = __import__('save_load', fromlist=[self.saver_loader])
+            val = loader.load(self.args)
+            self.world = val['world']
+            self.position = val['position']
+            self.rotation = val['rotation']
         elif cmd == 'say':
             print(args)
 
@@ -592,15 +674,17 @@ class Window(pyglet.window.Window):
         self.label.text = '%02d (%.2f, %.2f, %.2f) %d / %d' % (
             pyglet.clock.get_fps(), x, y, z,
             len(self.model._shown), len(self.model.world))
-        self.hudLabel.text = 'CurrentBlock:%s Health:%d' % (
+        self.hudLabel.text = 'CurrentBlock:%s Health:%i' % (
             self.block['name'], self.health
         )
         self.label.draw()
-        self.hudLabel.draw()
+        if self.gamemode != 3:
+            self.hudLabel.draw()
 
     def draw_reticle(self):
         glColor3d(0, 0, 0)
-        self.reticle.draw(GL_LINES)
+        if self.gamemode != 3:
+            self.reticle.draw(GL_LINES)
 
 def setup():
     glClearColor(0.5, 0.69, 1.0, 1)
