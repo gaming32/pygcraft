@@ -1,3 +1,5 @@
+from __future__ import print_function
+import sys
 import math, random, time, datetime
 from collections import deque
 from pyglet import image
@@ -16,7 +18,14 @@ MAX_JUMP_HEIGHT = 1.125
 JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
 TERMINAL_VELOCITY = 50
 PLAYER_HEIGHT = 2
+
 xrange = range
+if hasattr(time, 'process_time'):
+    timefunc = time.process_time
+else:
+    timefunc = time.clock
+if sys.version_info[0] == 2:
+    input = raw_input
 
 def cube_vertices(x, y, z, n):
     return [
@@ -239,8 +248,8 @@ class Model(object):
         func(*args)
 
     def process_queue(self):
-        start = time.process_time()
-        while self.queue and time.process_time() - start < 1.0 / TICKS_PER_SEC:
+        start = timefunc()
+        while self.queue and timefunc() - start < 1.0 / TICKS_PER_SEC:
             self._dequeue()
 
     def process_entire_queue(self):
@@ -439,9 +448,11 @@ class Window(pyglet.window.Window):
         elif symbol == key.SPACE:
             if self.dy == 0 or self.flying:
                 self.dy += JUMP_SPEED
-        elif symbol == key.T or symbol == key.SLASH:
-            self.set_exclusive_mouse(False)
-            self.chatbox_open = True
+        # elif symbol == key.T or symbol == key.SLASH:
+        #     self.set_exclusive_mouse(False)
+        #     self.chatbox_open = True
+        elif symbol == key.C:
+            self.command_exec(input('/'))
         elif symbol == key.TAB:
             self.flying = not self.flying
         elif modifiers & key.MOD_ALT:
@@ -558,8 +569,23 @@ class Window(pyglet.window.Window):
             self.chatbox_history.append(text)
 
     def command_exec(self, cmd):
-        cmd = cmd[1:]
-        print(cmd)
+        cmd = cmd.lstrip('/')
+        # print(cmd)
+        cmd, args = cmd.split(' ', 1)
+        if cmd == 'tp':
+            pos = tuple(int(x) for x in args.split(' '))
+            self.position = pos
+            print('Teleported Player to %i, %i, %i' % pos)
+        elif cmd == 'kill':
+            self.death()
+            print('Killed Player')
+        elif cmd == 'loadseed':
+            random.seed(int(args))
+            self.world = Model()
+        elif cmd == 'seed':
+            print(random.seed())
+        elif cmd == 'say':
+            print(args)
 
     def draw_label(self):
         x, y, z = self.position
