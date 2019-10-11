@@ -1,6 +1,10 @@
-from __future__ import print_function
-import sys
+from __future__ import print_function, nested_scopes, division
+import sys, os
 import math, random, time, datetime
+try:
+    import _thread as thread
+except ImportError:
+    import thread
 from collections import deque
 from pyglet import image, options
 from pyglet.gl import *
@@ -8,6 +12,7 @@ from pyglet.graphics import TextureGroup
 from pyglet.window import key, mouse
 options['audio'] = ('openal', 'pulse', 'directsound', 'silent')
 from pyglet import media
+import settings
 
 TICKS_PER_SEC = 60
 SECTOR_SIZE = 8
@@ -20,6 +25,8 @@ MAX_JUMP_HEIGHT = 1.125
 JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
 TERMINAL_VELOCITY = 50
 PLAYER_HEIGHT = 2
+
+# sys.path.append('savers_and_loaders')
 
 xrange = range
 if hasattr(time, 'process_time'):
@@ -63,33 +70,59 @@ def tex_coords(top, bottom, side):
     result.extend(side * 4)
     return result
 
-break_sfx = {
-    'grass': media.load('sounds/grass_break.wav'),
-    'sand': media.load('sounds/sand_break.wav'),
-    'stone': media.load('sounds/stone_break.wav'),
-    'wood': media.load('sounds/wood_break.wav'),
-}
+class Block:
+    def __init__(self, texture, name, height=0, break_sfx=None):
+        self.texture = texture
+        self.name = name
+        self.height = height
+        if break_sfx is None:
+            break_sfx = []
+            for file in os.listdir('sounds'):
+                if file.startswith('%s_break' % name.lower()):
+                    break_sfx.append('sounds/%s' % file)
+                    print(file)
+        if settings.DO_BREAK_SFX:
+            for (num, sound) in enumerate(break_sfx):
+                break_sfx[num] = media.load(sound)
+        else:
+            self.break_sfx = None
+    def notify_update(self, world, x, y, z): 
+        print('Block Update:', str(world)[:25], x, y, z)
+    def block_update(self, world, x, y, z):
+        if not settings.DO_BLOCK_UPDATES: return
+        for (nx, ny, nz) in ((0,0,1), (0,1,0), (1,0,0), (0,0,-1), (0,-1,0), (-1,0,0)):
+            coords = (x + nx), (y + ny), (z + nz)
+            if coords in world:
+                world[coords].notify_update(world, *coords)
+    def destroy(self, world, x, y, z):
+        self.block_update(world, x, y, z)
+        if self.break_sfx is not None:
+            try:
+                print(self.break_sfx)
+                print(random.choice(self.break_sfx))
+                random.choice(self.break_sfx).play()
+            except media.exceptions.MediaException: pass
 
 TEXTURE_PATH = 'textures/texture.png'
-GRASS = {'texture': tex_coords((1, 0), (1, 0), (1, 0)), 'height': 0, 'name': 'GRASS'}
-DIRT = {'texture': tex_coords((0, 1), (0, 1), (0, 1)), 'height': 0, 'name': 'DIRT'}
-SAND = {'texture': tex_coords((1, 1), (1, 1), (1, 1)), 'height': 0, 'name': 'SAND'}
-STONE = {'texture': tex_coords((2, 0), (2, 0), (2, 0)), 'height': 0, 'name': 'STONE'}
-IRON = {'texture': tex_coords((2, 1), (2, 1), (2, 1)), 'height': 0, 'name': 'IRON'}
-STEEL = {'texture': tex_coords((3, 1), (3, 1), (3, 1)), 'height': 0, 'name': 'STEEL'}
-WOOD = {'texture': tex_coords((0, 0), (0, 0), (0, 0)), 'height': 0, 'name': 'WOOD'}
-LOG = {'texture': tex_coords((3, 0), (3, 0), (3, 3)), 'height': 0, 'name': 'LOG'}
-BENCH = {'texture': tex_coords((0, 2), (0, 0), (0, 0)), 'height': 0, 'name': 'BENCH'}
-OVEN = {'texture': tex_coords((3, 2), (3, 2), (1, 2)), 'height': 0, 'name': 'OVEN'}
-REACTOR = {'texture': tex_coords((2, 2), (2, 2), (2, 2)), 'height': 0, 'name': 'REACTOR'}
-BLACK_IRON = {'texture': tex_coords((3, 2), (3, 2), (3, 2)), 'height': 0, 'name': 'BLACK_IRON'}
-FIRE = {'texture': tex_coords((0, 4), (0, 4), (0, 3)), 'height': 0, 'name': 'FIRE'}
-ICE = {'texture': tex_coords((1, 3), (1, 3), (1, 3)), 'height': 0, 'name': 'ICE'}
-WATER = {'texture': tex_coords((2, 3), (2, 3), (2, 3)), 'height': 0, 'name': 'WATER'}
+GRASS = Block(tex_coords((1, 0), (1, 0), (1, 0)), 'GRASS')
+DIRT = Block(tex_coords((0, 1), (0, 1), (0, 1)), 'DIRT')
+SAND = Block(tex_coords((1, 1), (1, 1), (1, 1)), 'SAND')
+STONE = Block(tex_coords((2, 0), (2, 0), (2, 0)), 'STONE')
+IRON = Block(tex_coords((2, 1), (2, 1), (2, 1)), 'IRON')
+STEEL = Block(tex_coords((3, 1), (3, 1), (3, 1)), 'STEEL')
+WOOD = Block(tex_coords((0, 0), (0, 0), (0, 0)), 'WOOD')
+LOG = Block(tex_coords((3, 0), (3, 0), (3, 3)), 'LOG')
+BENCH = Block(tex_coords((0, 2), (0, 0), (0, 0)), 'BENCH')
+OVEN = Block(tex_coords((3, 2), (3, 2), (1, 2)), 'OVEN')
+REACTOR = Block(tex_coords((2, 2), (2, 2), (2, 2)), 'REACTOR')
+BLACK_IRON = Block(tex_coords((3, 2), (3, 2), (3, 2)), 'BLACK_IRON')
+FIRE = Block(tex_coords((0, 4), (0, 4), (0, 3)), 'FIRE')
+ICE = Block(tex_coords((1, 3), (1, 3), (1, 3)), 'ICE')
+WATER = Block(tex_coords((2, 3), (2, 3), (2, 3)), 'WATER')
 BLOCKS = [GRASS, DIRT, SAND, STONE, IRON, STEEL, WOOD, LOG, BENCH, OVEN, REACTOR, BLACK_IRON, FIRE, ICE, WATER]
 HALFBLOCKS = []
 for block in BLOCKS:
-    HALFBLOCKS.append({'texture': block['texture'], 'height': 0.5, 'name': block['name']+'_HALF'})
+    HALFBLOCKS.append(Block(block.texture, block.name+'_HALF', height=0.5))
 FACES = [
     ( 0, 1, 0),
     ( 0,-1, 0),
@@ -127,10 +160,11 @@ class Model(object):
         n = size
         s = 1
         y = 0
-        def update_progress(amount=1):
-            nonlocal progress
+        def update_progress(progress, amount=1):
             progress += amount
-            print('Generating World... Progress: %i/%i (%i%%)' % (progress, length, progress / length * 100), end='\r')
+            if settings.LOG_WORLD_GEN_PROGRESS:
+                print('Generating World... Progress: %i/%i (%i%%)' % (progress, length, progress / length * 100), end='\r')
+            return progress
         length = ((2 * size + 2) ** 2) + hills * 5000 - 483
         progress = 0
         for x in xrange(-n, n + 1, s):
@@ -140,7 +174,7 @@ class Model(object):
                 if x in (-n, n) or z in (-n, n):
                     for dy in xrange(-2, 3):
                         self.add_block((x, y + dy, z), walls, immediate=False)
-                update_progress()
+                progress = update_progress(progress)
         o = n - 20
         for _ in xrange(hills):
             a = random.randint(-o, o)
@@ -159,7 +193,7 @@ class Model(object):
                             continue
                         self.add_block((x, y, z), t, immediate=False)
                 s -= d
-            update_progress(5000)
+            progress = update_progress(progress, 5000)
         print()
 
     def hit_test(self, position, vector, max_distance=8):
@@ -193,10 +227,8 @@ class Model(object):
             self.check_neighbors(position)
 
     def remove_block(self, position, immediate=True):
-        if immediate:
-            ix = self.world[position]
-            if ix == GRASS['texture']:
-                break_sfx['grass'].play()
+        # if immediate:
+        #     self.world[position].destroy(self.world, *position)
         del self.world[position]
         self.sectors[sectorize(position)].remove(position)
         if immediate:
@@ -218,7 +250,7 @@ class Model(object):
                     self.hide_block(key)
 
     def show_block(self, position, immediate=True):
-        texture = self.world[position]['texture']
+        texture = self.world[position].texture
         self.shown[position] = texture
         if immediate:
             self._show_block(position, texture)
@@ -227,7 +259,7 @@ class Model(object):
 
     def _show_block(self, position, texture):
         x, y, z = position
-        vertex_data = cube_vertices(x, y - self.world[position]['height'], z, 0.5)
+        vertex_data = cube_vertices(x, y - self.world[position].height, z, 0.5)
         texture_data = list(texture)
         self._shown[position] = self.batch.add(24, GL_QUADS, self.group,('v3f/static', vertex_data),('t2f/static', texture_data))
 
@@ -297,7 +329,17 @@ class Window(pyglet.window.Window):
         # self.loading_image = image.load('textures/loading.png')
         # self.loaded = False
         # pyglet.clock.schedule(self._loading_screen, 1)
+        # if settings.LOG_WORLD_GEN_PROGRESS:
+        #     thread.start_new_thread(self._load, ())
+        # else:
+        #     self._init()
+        self._init()
+        # pyglet.app.run()
 
+    def _load(self):
+        pyglet.clock.schedule_once(self._init, 0)
+
+    def _init(self, dt=0):
         self.exclusive = False
         self.chatbox_open = False
         self.showLabel = True
@@ -514,7 +556,8 @@ class Window(pyglet.window.Window):
         elif symbol == key.C:
             self.command_exec(input('/'))
         elif symbol == key.TAB:
-            self.flying = not self.flying
+            if not (self.gamemode == 3 or self.gamemode == 4):
+                self.flying = not self.flying
         elif modifiers & key.MOD_ALT:
             self.running = not self.running
         elif symbol in self.num_keys and modifiers & key.MOD_CTRL:
@@ -600,7 +643,7 @@ class Window(pyglet.window.Window):
         block = self.model.hit_test(self.position, vector)[0]
         if block and self.gamemode != 3:
             x, y, z = block
-            vertex_data = cube_vertices(x, y - self.model.world[block]['height'], z, 0.51)
+            vertex_data = cube_vertices(x, y - self.model.world[block].height, z, 0.51)
             glColor3d(0, 0, 0)
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
             pyglet.graphics.draw(24, GL_QUADS, ('v3f/static', vertex_data))
@@ -628,6 +671,11 @@ class Window(pyglet.window.Window):
         else:
             self.chatbox_history.append(text)
 
+    def set_gamemode(self, mode):
+        self.gamemode = mode
+        if mode == 3 or mode == 4:
+            self.flying = True
+
     def command_exec(self, cmd):
         cmd = cmd.lstrip('/')
         # print(cmd)
@@ -642,7 +690,7 @@ class Window(pyglet.window.Window):
             self.death()
             print('Killed Player')
         elif cmd == 'gamemode':
-            self.gamemode = int(args)
+            self.set_gamemode(int(self.args))
         elif cmd == 'loadseed':
             random.seed(int(args))
             self.world = Model()
@@ -655,13 +703,14 @@ class Window(pyglet.window.Window):
         elif cmd == 'savefmt':
             self.saver_loader = args
         elif cmd == 'save':
-            exec('from save_load import %s as saver' % self.saver_loader, globals())
-            # saver = __import__('save_load', fromlist=[self.saver_loader])
+            # saver = __import__(self.saver_loader + '_format')
+            saver = settings.saver_loader
             print(dir(saver))
-            print(saver.save(self.args, world=self.world, position=self.position, rotation=self.rotation))
+            print(type(saver.save))
+            saver.save(self.args, world=self.world, position=self.position, rotation=self.rotation)
         elif cmd == 'load':
-            exec('import save_load.%s as loader' % self.saver_loader)
-            # loader = __import__('save_load', fromlist=[self.saver_loader])
+            # loader = __import__(self.saver_loader + '_format')
+            loader = settings.saver_loader
             val = loader.load(self.args)
             self.world = val['world']
             self.position = val['position']
@@ -675,7 +724,7 @@ class Window(pyglet.window.Window):
             pyglet.clock.get_fps(), x, y, z,
             len(self.model._shown), len(self.model.world))
         self.hudLabel.text = 'CurrentBlock:%s Health:%i' % (
-            self.block['name'], self.health
+            self.block.name, self.health
         )
         self.label.draw()
         if self.gamemode != 3:
@@ -691,6 +740,8 @@ def setup():
     glEnable(GL_CULL_FACE)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
 def main():
     window = Window(width=800, height=600, caption='PygCraft', resizable=True)

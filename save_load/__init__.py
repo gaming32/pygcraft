@@ -1,1 +1,0 @@
-"Put your savers and loaders in this folder for it to become a valid save format."
